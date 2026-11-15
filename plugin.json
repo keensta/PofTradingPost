@@ -1,0 +1,17 @@
+{
+    "name": "POF Trading Post",
+    "version": "0.0.1",
+    "contactEmailAddress": "keensta@hotmail.co.uk",
+    "hasRibbonIcon": true,
+    "hasSettingsIcon": true,
+    "requiredDependencies": {
+        "prettyui": "prettyui"
+    },
+    "optionalPermissions": [
+        "trackingAccess",
+        "httpAccess"
+    ],
+    "urls": {
+        "api": "https://pofapi.race-roster.co.uk"
+    }
+}
