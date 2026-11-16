@@ -17,7 +17,7 @@ local ListingsTab = {}
 ListingsTab.__index = ListingsTab
 
 local SIDEBAR_WIDTH = 210
-local GAP = 6
+local GAP = 4
 local FOOTER_HEIGHT = 66 -- Load More button + status line under the sidebar
 local MESSAGE_COLOUR = 0xC9BEA4FF
 local SUBSCRIBER_ID = "pofTradingPost_listingsTab"

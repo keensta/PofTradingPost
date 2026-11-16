@@ -9,7 +9,7 @@ local ManageTab = {}
 ManageTab.__index = ManageTab
 
 local TOOLBAR_HEIGHT = 32
-local GAP = 8
+local GAP = 6
 local SUBSCRIBER_ID = "pofTradingPost_manageTab"
 local MESSAGE_COLOUR = 0xC9BEA4FF
 

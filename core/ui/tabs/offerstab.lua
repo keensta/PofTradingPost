@@ -4,7 +4,7 @@ local OffersTab = {}
 OffersTab.__index = OffersTab
 
 local MESSAGE_HEIGHT = 32
-local GAP = 8
+local GAP = 6
 local MESSAGE_COLOUR = 0xC9BEA4FF
 
 function OffersTab.new(pageLayer, options)

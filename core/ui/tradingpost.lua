@@ -24,8 +24,6 @@ local TAB_TRADES = "trades"
 local TRADES_INDEX = 4
 local SUBSCRIBER_ID = "pofTradingPost_tradingPostUI"
 
-local TAB_RIGHT_INSET = 16
-
 local TAB_CLASSES = {
     [TAB_LISTINGS] = ListingsTab,
     [TAB_MANAGE] = ManageTab,
@@ -75,7 +73,7 @@ local function buildTabFor(page, value)
 
     if TabClass ~= nil then
         TradingPostUI.activeTabObject = TabClass.new(root, {
-            width = pageWidth - TAB_RIGHT_INSET,
+            width = pageWidth,
             height = pageHeight,
             dialogParent = TradingPostUI.parent
         })
