@@ -1,6 +1,6 @@
 local PofEvent = require("core/util/pofevent")
 local AuthHandler = require("core/handlers/authhandler")
-local ListingsHandler = require("core/handlers/listingshandler.lua")
+local ListingsHandler = require("core/handlers/listingshandler")
 local OffersHandler = require("core/handlers/offershandler")
 
 --[[
