@@ -1,7 +1,7 @@
 local PofEvent = require("core/util/pofevent")
 local PlayerData = require("core/data/player")
 local Settings = require("core/data/settings")
-local API = require("core/data/API")
+local API = require("core/data/api")
 
 --[[
 
