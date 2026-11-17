@@ -51,6 +51,15 @@ local STATUS_TEXT = {
     noPermission = "POF Trading Post needs the tracking and HTTP permissions enabled.",
 }
 
+local STATUS_COLOURS = {
+    connected = 0x5FD35FFF,  -- green
+    needsKey = 0xFFA040FF,   -- orange
+    waiting = 0x5AA9FFFF,    -- blue
+    connecting = 0x5AA9FFFF, -- blue
+}
+
+AuthHandler.ERROR_COLOUR = 0xE05050FF -- red
+
 local SUBSCRIBER_ID = "pofTradingPost_authHandler"
 
 local function setStatus(status, message)
@@ -62,6 +71,10 @@ local function setStatus(status, message)
         status = status,
         text = AuthHandler:getStatusText(),
     })
+end
+
+function AuthHandler:canReconnect()
+    return self.status ~= self.Status.CONNECTED and not self.connecting
 end
 
 function AuthHandler:init()
@@ -84,6 +97,10 @@ end
 
 function AuthHandler:getStatusText()
     return self.message or STATUS_TEXT[self.status] or ""
+end
+
+function AuthHandler:getStatusColour(status)
+    return STATUS_COLOURS[status or self.status] or self.ERROR_COLOUR
 end
 
 function AuthHandler:connect(onDone)
@@ -140,13 +157,32 @@ end
 
 function AuthHandler:startSession(onDone)
     API.session(PlayerData.getName(), function(ok, data, code)
-        self.connecting = false
-
         if ok then
+            self.connecting = false
             Settings.set("keyRegistered", true)
             setStatus(self.Status.CONNECTED)
             onDone(true)
         elseif code == 401 then
+            self:registerAfterBadKey(onDone)
+        else
+            self.connecting = false
+            setStatus(self.Status.OFFLINE, data)
+            onDone(false, data)
+        end
+    end)
+end
+
+function AuthHandler:registerAfterBadKey(onDone)
+    API.register(PlayerData.getTrackingId(), PlayerData.getName(), function(ok, data, code)
+        self.connecting = false
+
+        if ok and data.secretKey ~= nil then
+            Settings.set("previousSecretKey", Settings.get("secretKey"))
+            Settings.set("secretKey", data.secretKey)
+            Settings.set("keyRegistered", true)
+            setStatus(self.Status.CONNECTED)
+            onDone(true)
+        elseif code == 409 then
             setStatus(self.Status.BAD_KEY)
             onDone(false, STATUS_TEXT.badKey)
         else
@@ -200,6 +236,34 @@ function AuthHandler:rotateKey(onDone)
 
         onDone(true, data.secretKey)
     end)
+end
+
+function AuthHandler:clearLocalData(onDone)
+    onDone = onDone or function() end
+
+    if self.connecting then
+        onDone(false, "Still connecting, try again in a moment.")
+        return
+    end
+
+    if not Settings.clearAll() then
+        onDone(false, "Couldn't clear your data, try again once you're logged in.")
+        return
+    end
+
+    setStatus(self.Status.OFFLINE, "Local data cleared. Press Reconnect to connect again.")
+    onDone(true)
+end
+
+function AuthHandler:reconnect(onDone)
+    onDone = onDone or function() end
+
+    if self.connecting then
+        onDone(false, "Already connecting, give it a moment.")
+        return
+    end
+
+    self:connect(onDone)
 end
 
 function AuthHandler:shutdown()

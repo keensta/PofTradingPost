@@ -115,4 +115,33 @@ function Settings.reset(key)
     return Settings.set(key, getDefinition(key).default)
 end
 
+function Settings.clearAll()
+    local prefix = storageKey("")
+
+    if prefix == nil then
+        log("Can't clear settings before the player has loaded")
+        return false
+    end
+
+    local toDelete = {}
+
+    PersistentDB:IterateEntries(function(key)
+        if key:sub(1, #prefix) == prefix then
+            toDelete[#toDelete + 1] = key
+        end
+        return false
+    end)
+
+    for _, fullKey in ipairs(toDelete) do
+        PersistentDB:Delete(fullKey)
+        cache[fullKey] = nil
+    end
+
+    for key, def in pairs(definitions) do
+        PofEvent.SettingChanged.Fire({ key = key, newValue = def.default, oldValue = nil })
+    end
+
+    return true
+end
+
 return Settings
