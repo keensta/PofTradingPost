@@ -11,9 +11,9 @@ local Api = require("core/data/api")
 local App = {}
 
 function App.start()
-    ExecuteConsoleCommand("ppr poftradingpost")
-    ExecuteConsoleCommand("ppe poftradingpost trackingAccess")
-    ExecuteConsoleCommand("ppe poftradingpost httpAccess")
+    ExecuteConsoleCommand("ppr PofTradingPost")
+    ExecuteConsoleCommand("ppe PofTradingPost trackingAccess")
+    ExecuteConsoleCommand("ppe PofTradingPost httpAccess")
 
     --print("POF Trading Post Loading...")
 
