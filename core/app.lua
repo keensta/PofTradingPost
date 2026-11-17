@@ -16,7 +16,7 @@ function App.start()
     ExecuteConsoleCommand("ppe PofTradingPost httpAccess")
 
     --print("POF Trading Post Loading...")
-
+    Api.init()
     AuthHandler:init()
     PlayerData.init()
 
