@@ -10,15 +10,32 @@ local Settings = require("core/data/settings")
     All functions take onDone(ok, data, statusCode):
         ok = true  - data is the decoded JSON response
         ok = false - data is a message the UI can show as is
+
+    Requests are queued and sent ONE AT A TIME:
+    - Calling Api.x() only adds a job to the queue, nothing is sent straight away.
+    - The next job only starts once the current one has finished (or timed out).
+    - A GET for a path that's already waiting in the queue doesn't send twice, the
+      callbacks are added to the waiting job instead.
+    - onDone is always called later (never synchronously), even for errors like
+      missing permission, so callers behave the same either way.
+
+    Call Api.init() on plugin start and Api.shutdown() on plugin shutdown.
 ]]
 
 local Api = {}
 
 local SECRET_KEY_HEADER = "X-Secret-Key"
 local CANT_REACH = "Can't reach the Trading Post server, try again later."
+local SUBSCRIBER_ID = "pofTradingPost_apiQueue"
 
+-- Event.Logic runs 50 times a second. Give up on a request after 30 seconds.
+local LOGIC_PER_SECOND = 50
+local TIMEOUT_TICKS = 30 * LOGIC_PER_SECOND
 
-local activeRequests = {}
+local queue = {}     -- jobs waiting to be sent, oldest first
+local current = nil  -- the job in flight, or nil
+local ticks = 0
+local running = false
 
 local function urlEncode(text)
     return (tostring(text):gsub("[^%w%-_%.~]", function(c)
@@ -26,14 +43,34 @@ local function urlEncode(text)
     end))
 end
 
--- Turns a finished HTTPRequest into onDone(ok, data, statusCode).
-local function handleResponse(req, onDone)
-    activeRequests[req] = nil
+-- Calls every callback waiting on this job exactly once.
+local function finishJob(job, ok, data, code)
+    if job.done then return end
 
-    if req.cancelled then return end
+    job.done = true
+
+    if current == job then current = nil end
+
+    for _, onDone in ipairs(job.callbacks) do
+        local handled, err = pcall(onDone, ok, data, code)
+
+        if not handled then
+            print("POF Trading Post: handler for " .. job.path .. " failed: " .. tostring(err))
+        end
+    end
+end
+
+-- Turns a finished HTTPRequest into onDone(ok, data, statusCode).
+local function handleResponse(job, req)
+    if job.done then return end -- timed out or shut down already
+
+    if req.cancelled then
+        finishJob(job, false, CANT_REACH, 0)
+        return
+    end
 
     if req.timedOut or (req.failed and (req.responseCode or 0) == 0) then
-        onDone(false, CANT_REACH, 0)
+        finishJob(job, false, CANT_REACH, 0)
         return
     end
 
@@ -41,18 +78,103 @@ local function handleResponse(req, onDone)
     local body = nil
 
     if req.data ~= nil and req.data ~= "" then
-        body = Json.decode(req.data)
+        local decoded, result = pcall(Json.decode, req.data)
+
+        if decoded then
+            body = result
+        elseif code >= 200 and code < 300 then
+            -- 2xx but not JSON, e.g. a proxy / challenge page
+            print("POF Trading Post: bad JSON from " .. job.path)
+            finishJob(job, false, "Trading Post server sent a bad response, try again later.", code)
+            return
+        end
     end
 
     if code >= 200 and code < 300 then
-        onDone(true, body or {}, code)
+        finishJob(job, true, body or {}, code)
         return
     end
 
     -- API errors are always { "error": "message" }
     local message = type(body) == "table" and body.error or nil
 
-    onDone(false, message or formatStr("Trading Post server error ({}).", code), code)
+    finishJob(job, false, message or formatStr("Trading Post server error ({}).", code), code)
+end
+
+-- Sends one job. Checks happen here, at send time, so a key saved after queueing is used.
+local function send(job)
+    if not Plugin.HasPermission(PluginPermissions.httpAccess) then
+        finishJob(job, false, "Enable the HTTP permission for POF Trading Post in the plugin settings.", 0)
+        return
+    end
+
+    if Plugin.urls == nil or Plugin.urls.api == nil then
+        finishJob(job, false, "Trading Post server address missing from plugin.json.", 0)
+        return
+    end
+
+    local key = Settings.get("secretKey")
+
+    if not job.options.noKey and (key == nil or key == "") then
+        finishJob(job, false, "No secret key yet. Check the Trading Post settings page.", 401)
+        return
+    end
+
+    current = job
+    job.startedAt = ticks
+
+    local ok, problem = pcall(function()
+        local req = HTTPRequest.new(Plugin.urls.api, job.path)
+
+        job.req = req
+
+        req:AddHeader("Content-Type", "application/json")
+
+        if not job.options.noKey then
+            req:AddHeader(SECRET_KEY_HEADER, key)
+        end
+
+        local function onComplete(finished)
+            local handled, err = pcall(handleResponse, job, finished)
+
+            if not handled then
+                print("POF Trading Post: response handler failed for " .. job.path .. ": " .. tostring(err))
+                finishJob(job, false, CANT_REACH, 0)
+            end
+        end
+
+        if job.method == "POST" then
+            req:Post(Json.encode(job.body or {}), onComplete)
+        else
+            req:Get(onComplete)
+        end
+    end)
+
+    if not ok then
+        print("POF Trading Post: request to " .. job.path .. " failed: " .. tostring(problem))
+        finishJob(job, false, CANT_REACH, 0)
+    end
+end
+
+-- Runs every Logic tick: watch the current request, or start the next one.
+local function pump()
+    ticks = ticks + 1
+
+    if current ~= nil then
+        if ticks - current.startedAt > TIMEOUT_TICKS then
+            local job = current
+
+            print("POF Trading Post: " .. job.path .. " took too long, skipping it")
+            finishJob(job, false, CANT_REACH, 0) -- marks done first so the cancel callback is ignored
+            pcall(function() job.req:Cancel() end)
+        end
+
+        return
+    end
+
+    local job = table.remove(queue, 1)
+
+    if job ~= nil then send(job) end
 end
 
 --[[
@@ -65,54 +187,24 @@ local function request(method, path, body, onDone, options)
     onDone = onDone or function() end
     options = options or {}
 
-    if not Plugin.HasPermission(PluginPermissions.httpAccess) then
-        onDone(false, "Enable the HTTP permission for POF Trading Post in the plugin settings.", 0)
-        return
-    end
-
-    if Plugin.urls == nil or Plugin.urls.api == nil then
-        onDone(false, "Trading Post server address missing from plugin.json.", 0)
-        return
-    end
-
-    local key = Settings.get("secretKey")
-
-    if not options.noKey and (key == nil or key == "") then
-        onDone(false, "No secret key yet. Check the Trading Post settings page.", 401)
-        return
-    end
-
-    local ok, problem = pcall(function()
-        local req = HTTPRequest.new(Plugin.urls.api, path)
-
-        req:AddHeader("Content-Type", "application/json")
-
-        if not options.noKey then
-            req:AddHeader(SECRET_KEY_HEADER, key)
-        end
-
-        activeRequests[req] = true
-
-        local function onComplete(finished)
-            local handled, err = pcall(handleResponse, finished, onDone)
-
-            if not handled then
-                activeRequests[finished] = nil
-                print("POF Trading Post: response handler failed for " .. path .. ": " .. tostring(err))
+    -- Same GET already waiting? Share it instead of sending twice.
+    if method == "GET" then
+        for _, waiting in ipairs(queue) do
+            if waiting.method == "GET" and waiting.path == path then
+                waiting.callbacks[#waiting.callbacks + 1] = onDone
+                return
             end
         end
-
-        if method == "POST" then
-            req:Post(Json.encode(body or {}), onComplete)
-        else
-            req:Get(onComplete)
-        end
-    end)
-
-    if not ok then
-        print("POF Trading Post: request to " .. path .. " failed: " .. tostring(problem))
-        onDone(false, CANT_REACH, 0)
     end
+
+    queue[#queue + 1] = {
+        method = method,
+        path = path,
+        body = body,
+        options = options,
+        callbacks = { onDone },
+        done = false,
+    }
 end
 
 local function get(path, onDone)
@@ -121,6 +213,24 @@ end
 
 local function post(path, body, onDone)
     request("POST", path, body, onDone)
+end
+
+-- Queue control ----------------------------------------------------------------------
+
+function Api.init()
+    if running then return end
+
+    running = true
+    queue = {}
+    current = nil
+    ticks = 0
+
+    Event.Logic.Subscribe(SUBSCRIBER_ID, pump)
+end
+
+-- How many requests are waiting or in flight (handy for debugging).
+function Api.pending()
+    return #queue + (current ~= nil and 1 or 0)
 end
 
 -- Auth -------------------------------------------------------------------------------
@@ -214,13 +324,22 @@ function Api.getTradeName(offerID, onDone)
     get("/offers/" .. offerID .. "/trade_name", onDone)
 end
 
--- Cancels everything in flight (plugin shutdown).
+-- Drops everything waiting and cancels the request in flight (plugin shutdown).
+-- No callbacks are called, the UI is going away anyway.
 function Api.shutdown()
-    for req in pairs(activeRequests) do
-        pcall(function() req:Cancel() end)
-    end
+    Event.Logic.Unsubscribe(SUBSCRIBER_ID)
+    running = false
 
-    activeRequests = {}
+    for _, job in ipairs(queue) do job.done = true end
+    queue = {}
+
+    if current ~= nil then
+        local job = current
+
+        job.done = true
+        current = nil
+        pcall(function() job.req:Cancel() end)
+    end
 end
 
 return Api
