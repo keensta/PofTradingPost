@@ -7,19 +7,6 @@ local SettingsUI = {
 }
 local SUBSCRIBER_ID = "pofTradingPost_settingsUI"
 
-local STATUS_COLOURS = {
-    connected = 0x5FD35FFF,  -- green
-    needsKey = 0xFFA040FF,   -- orange
-    waiting = 0x5AA9FFFF,    -- blue
-    connecting = 0x5AA9FFFF, -- blue
-}
-
-local ERROR_COLOUR = 0xE05050FF -- red
-
-local function statusColour(status)
-    return STATUS_COLOURS[status] or ERROR_COLOUR
-end
-
 function SettingsUI.init()
     Event.SettingsLayerReady.Subscribe(SUBSCRIBER_ID, function(event)
         if SettingsUI.view then
@@ -38,7 +25,7 @@ function SettingsUI.init()
 
         local statusText = view:AddText({
             text = AuthHandler:getStatusText(),
-            colour = statusColour(AuthHandler:getStatus()),
+            colour = AuthHandler:getStatusColour(),
         })
 
         view:AddText("Your secret key is generated the first time you use the Trading Post. It's sent to the API to confirm your identity, do not share it with anyone else. Using another PC? Copy the key here and enter it on the other one.")
@@ -52,7 +39,7 @@ function SettingsUI.init()
 
         local function setStatus(text, colour)
             statusText.content = text or ""
-            statusText.rgba = colour or statusColour(AuthHandler:getStatus())
+            statusText.rgba = colour or AuthHandler:getStatusColour()
         end
 
         view:AddSimpleButton("Set SecretKey", function()
@@ -87,8 +74,47 @@ function SettingsUI.init()
             end)
         end, { tooltip = "Makes a new key and stops the old one working. Use this if your key has been shared." })
 
+        view:AddDivider({
+            marginTop = 12,
+            marginBottom = 12,
+        })
+
+        view:AddSimpleButton("Clear Local Data", function()
+            prettyui.Confirm.new(parent, {
+                title = "CLEAR LOCAL DATA",
+                height = 200,
+                body = "This deletes your saved secret key from this PC. If your account still exists on the server you will need your key to get back in, copy it first. This can't be undone.",
+                confirmLabel = "Clear",
+                confirmVariant = "negative",
+                onConfirm = function()
+                    setStatus("Clearing local data...")
+                    keyField:SetText("")
+
+                    AuthHandler:clearLocalData(function(ok, problem)
+                        if ok then
+                            setStatus("Data cleared, please use the reconnect button below")
+                        else
+                            setStatus(problem)
+                        end
+                    end)
+                end,
+            })
+        end, {tooltip = "Deletes your saved key and settings on this PC." })
+
+        view:AddSimpleButton("Reconnect", function()
+            setStatus("Reconnecting...")
+
+            AuthHandler:reconnect(function(ok, problem)
+                if ok then
+                    setStatus("Connected to the Trading Post.")
+                else
+                    setStatus(problem)
+                end
+            end)
+        end, { inline = true, tooltip = "Try connecting to the Trading Post server again." })
+
         PofEvent.AuthChanged.Subscribe(SUBSCRIBER_ID, function(change)
-            setStatus(change.text, statusColour(change.status))
+            setStatus(change.text, AuthHandler:getStatusColour())
 
             if change.ready then
                 keyField:SetText(Settings.get("secretKey"))
