@@ -21,7 +21,7 @@ local Sync = {
     ticks = 0,
 }
 
-local REFRESH_MINUTES = 10
+local REFRESH_MINUTES = 3
 
 local SECONDS_PER_TICK = 0.6
 local REFRESH_TICKS = math.floor(REFRESH_MINUTES * 60 / SECONDS_PER_TICK)

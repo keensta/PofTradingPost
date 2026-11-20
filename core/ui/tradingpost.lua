@@ -2,34 +2,27 @@ local ListingsTab = require("core/ui/tabs/listingstab")
 local ManageTab = require("core/ui/tabs/managetab")
 local OffersTab = require("core/ui/tabs/offerstab")
 local TradesTab = require("core/ui/tabs/tradestab")
-local OffersHandler = require("core/handlers/offershandler")
-local PofEvent = require("core/util/pofevent")
 local Sync = require("core/data/sync")
 
 local TradingPostUI = {
-    activeTab = nil,       
-    activeTabObject = nil, -- ListingsTab / ManageTab / OffersTab instance, destroy() unsubscribes its events
+    activeTab = nil,
+    activeTabObject = nil,
     activeTabValue = "",
     activeWindow = nil,
     tabs = nil,
-    tradesVisible = nil,
 }
 
-local TAB_LISTINGS = "listings"
-local TAB_MANAGE = "manage"
-local TAB_OFFERS = "offers"
-local TAB_TRADES = "trades"
-
--- Trades must stay the last tab, hiding the last tab's button leaves no gap in the tab bar
-local TRADES_INDEX = 4
-local SUBSCRIBER_ID = "pofTradingPost_tradingPostUI"
-
-local TAB_CLASSES = {
-    [TAB_LISTINGS] = ListingsTab,
-    [TAB_MANAGE] = ManageTab,
-    [TAB_OFFERS] = OffersTab,
-    [TAB_TRADES] = TradesTab,
+local TAB_DEFS = {
+    { text = "Listings", value = "listings", class = ListingsTab, tooltip = "Every player's listings, make offers here." },
+    { text = "Manage",   value = "manage",   class = ManageTab,   tooltip = "Manage your listings or add new ones." },
+    { text = "Offers",   value = "offers",   class = OffersTab,   tooltip = "Offers you've made on other players' listings." },
+    { text = "Trades",   value = "trades",   class = TradesTab,   tooltip = "Accepted offers waiting to be traded in game." },
 }
+
+local TAB_CLASSES = {}
+for _, def in ipairs(TAB_DEFS) do
+    TAB_CLASSES[def.value] = def.class
+end
 
 local function isLoaded(component)
     return component ~= nil and ui.Interfaces:GetInterface(component.interfaceID) ~= nil
@@ -87,47 +80,9 @@ local function buildTab(_, _, value, page)
     buildTabFor(page, value)
 end
 
---[[
-    Trades tab only shows while there are accepted offers to trade.
-    prettyui Tabs has no hide yet, so we disable it (which also moves off it if it's open) and hide its button.
-]]
-local function setTradesTabVisible(visible)
-    local tabs = TradingPostUI.tabs
-
-    if tabs == nil or TradingPostUI.tradesVisible == visible then return end
-
-    TradingPostUI.tradesVisible = visible
-
-    local tab = tabs:GetTab(TRADES_INDEX)
-
-    if tab == nil then return end
-
-    tabs:SetDisabled(TRADES_INDEX, not visible)
-
-    if tab.visual ~= nil then tab.visual.hidden = not visible end
-    if tab.hit ~= nil then tab.hit.hidden = not visible end
-end
-
-local function refreshTradesTab()
-    setTradesTabVisible(OffersHandler:hasTrades())
-end
-
-local function subscribeEvents()
-    PofEvent.OffersUpdated.Subscribe(SUBSCRIBER_ID, refreshTradesTab)
-    PofEvent.ListingsUpdated.Subscribe(SUBSCRIBER_ID, refreshTradesTab)
-    PofEvent.PlayerReady.Subscribe(SUBSCRIBER_ID, refreshTradesTab)
-end
-
-local function unsubscribeEvents()
-    PofEvent.OffersUpdated.Unsubscribe(SUBSCRIBER_ID)
-    PofEvent.ListingsUpdated.Unsubscribe(SUBSCRIBER_ID)
-    PofEvent.PlayerReady.Unsubscribe(SUBSCRIBER_ID)
-end
-
 local function onWindowClosed()
     local tabObject = TradingPostUI.activeTabObject
 
-    unsubscribeEvents()
     Sync.stop()
 
     if tabObject ~= nil and tabObject.destroy ~= nil then
@@ -140,7 +95,6 @@ local function onWindowClosed()
     TradingPostUI.activeWindow = nil
     TradingPostUI.parent = nil
     TradingPostUI.tabs = nil
-    TradingPostUI.tradesVisible = nil
 end
 
 function TradingPostUI.createWindow(parent, onClose)
@@ -153,7 +107,7 @@ function TradingPostUI.createWindow(parent, onClose)
         y = -350,
         xAnchor = 0.5,
         yAnchor = 0.5,
-        width = 1300,
+        width = 1500,
         height = 650,
         scrollable = false,
         destroyOnClose = true,
@@ -165,25 +119,20 @@ function TradingPostUI.createWindow(parent, onClose)
 
     TradingPostUI.activeWindow = window
 
+    local tabList = {}
+    for i, def in ipairs(TAB_DEFS) do
+        tabList[i] = { text = def.text, value = def.value, tooltip = def.tooltip, scrollable = false }
+    end
+
     local content = window.content
-    local tabs = window:AddTabs({
-        { text = "Listings", value = TAB_LISTINGS, tooltip = "Every player's listings, make offers here.", scrollable = false },
-        { text = "Manage", value = TAB_MANAGE, tooltip = "Manage your listings or add new ones.", scrollable = false },
-        { text = "Offers", value = TAB_OFFERS, tooltip = "Offers you've made on other players' listings.", scrollable = false },
-        { text = "Trades", value = TAB_TRADES, tooltip = "Accepted offers waiting to be traded in game.", scrollable = false }
-    }, { height = content.height - 40, onChange = buildTab })
+    local tabs = window:AddTabs(tabList, { height = content.height - 40, onChange = buildTab })
 
     TradingPostUI.tabs = tabs
 
     local activeTabIndex = tabs:GetActiveIndex()
-    local tabValues = { TAB_LISTINGS, TAB_MANAGE, TAB_OFFERS, TAB_TRADES }
+    buildTabFor(tabs:GetPage(activeTabIndex), TAB_DEFS[activeTabIndex].value)
 
-    buildTabFor(tabs:GetPage(activeTabIndex), tabValues[activeTabIndex])
-
-    refreshTradesTab()
-    subscribeEvents()
-
-    -- Fetch offers now and every 10 minutes while the window is open (core/data/sync.lua)
+    -- Fetch offers now and every 3 minutes while the window is open (core/data/sync.lua)
     Sync.start()
 
     return window
